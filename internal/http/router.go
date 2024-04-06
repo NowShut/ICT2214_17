@@ -3,6 +3,8 @@ package http
 import (
 	"fmt"
 	"net/http"
+
+	// "net/http"
 	"runtime"
 	"strings"
 	"time"
@@ -29,43 +31,56 @@ func getRealRemote(ctx *fasthttp.RequestCtx) string {
 }
 
 func hellPot(ctx *fasthttp.RequestCtx) {
-	fmt.Print("hellpot is called!\n")
 	path, pok := ctx.UserValue("path").(string)
 	if len(path) < 1 || !pok {
 		path = "/"
 	}
 
 	remoteAddr := getRealRemote(ctx)
-
-	slog := log.With().
-		Str("USERAGENT", string(ctx.UserAgent())).
-		Str("REMOTE_ADDR", remoteAddr).
-		Interface("URL", string(ctx.RequestURI())).Logger()
-
-	for _, denied := range config.UseragentBlacklistMatchers {
-		if strings.Contains(string(ctx.UserAgent()), denied) {
-			slog.Trace().Msg("Ignoring useragent")
-			ctx.Error("Not founds", http.StatusNotFound)
-			return
+	if string(ctx.RequestURI()) == "/wp-login" {
+		slog := log.With().
+			Str("USERAGENT", string(ctx.UserAgent())).
+			Str("REMOTE_ADDR", remoteAddr).
+			Interface("URL", string(ctx.RequestURI())).
+			Str("METHOD", string(ctx.Method()[:])).
+			Str("USERNAME", string(ctx.Request.PostArgs().Peek("username"))).
+			Str("PASSWORD", string(ctx.Request.PostArgs().Peek("password"))).Logger()
+		slog.Info().Msg("NEW")
+	}
+	if string(ctx.RequestURI()) == "/forum.php" {
+		slog := log.With().
+			Str("USERAGENT", string(ctx.UserAgent())).
+			Str("REMOTE_ADDR", remoteAddr).
+			Interface("URL", string(ctx.RequestURI())).
+			Str("METHOD", string(ctx.Method()[:])).
+			Str("TITLE", string(ctx.Request.PostArgs().Peek("postTitle"))).
+			Str("CONTENT", string(ctx.Request.PostArgs().Peek("postContent"))).Logger()
+		slog.Info().Msg("NEW")
+	} else {
+		slog := log.With().
+			Str("USERAGENT", string(ctx.UserAgent())).
+			Str("REMOTE_ADDR", remoteAddr).
+			Interface("URL", string(ctx.RequestURI())).
+			Str("METHOD", string(ctx.Method()[:])).Logger()
+		slog.Info().Msg("NEW")
+		for _, denied := range config.UseragentBlacklistMatchers {
+			if strings.Contains(string(ctx.UserAgent()), denied) {
+				slog.Trace().Msg("Ignoring useragent")
+				ctx.Error("Not founds", http.StatusNotFound)
+				return
+			}
 		}
-	}
 
-	if config.Trace {
-		slog = slog.With().Str("caller", path).Logger()
-	}
+		if config.Trace {
+			slog = slog.With().Str("caller", path).Logger()
+		}
 
-	slog.Info().Msg("NEW")
+		slog.Info().Msg("NEW")
+
+	}
 
 	// Get Request url and remove any get parameters that are appended.
-	reqUrl := ctx.RequestURI()
-	reqUrlString := string(reqUrl[:])
-	fmt.Print(reqUrlString + "\n")
-	index := strings.Index(reqUrlString, "?")
-	// If there actually is a ? in the url
-	if index != -1 {
-		reqUrlString = reqUrlString[:index]
-	}
-	fmt.Print(reqUrlString + "\n")
+	reqUrlString := string(ctx.RequestURI())
 	ctx.SetContentType("text/html")
 
 	//TODO The form method for the below 2 html forms.
@@ -138,7 +153,7 @@ func hellPot(ctx *fasthttp.RequestCtx) {
     <div class="content">
         <div class="login-container">
             <h2>Login</h2>
-            <form action="/login.php" method="post">
+            <form action="/wp-login" method="post">
                 <label for="username">Username:</label>
                 <input type="text" id="username" name="username" required><br>
                 <label for="password">Password:</label>
@@ -244,7 +259,7 @@ func hellPot(ctx *fasthttp.RequestCtx) {
 	<div style="color: red;">You need to be logged in to post.</div>
         <div class="form-container">
             <h2>Create a New Post</h2>
-            <form action="/wp-login.php" method="POST">
+            <form action="/forum.php" method="POST">
                 <label for="postTitle">Title:</label>
                 <input type="text" id="postTitle" name="postTitle" required><br>
                 <label for="postContent">Content:</label>
@@ -274,12 +289,6 @@ func hellPot(ctx *fasthttp.RequestCtx) {
 </body>
 </html>
 		`)
-	}
-
-	if reqUrlString == "/login.php" {
-		print("hello")
-		err := ctx.Request.PostArgs()
-		print(err)
 	}
 }
 
@@ -339,6 +348,7 @@ func Serve() error {
 		for _, p := range config.Paths {
 			log.Trace().Str("caller", "router").Msgf("Add route: %s", p)
 			r.GET(fmt.Sprintf("/%s", p), hellPot)
+			r.POST(fmt.Sprintf("/%s", p), hellPot)
 		}
 	} else {
 		log.Trace().Msg("Catch-All mode enabled...")
