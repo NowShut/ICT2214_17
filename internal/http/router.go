@@ -1,8 +1,13 @@
 package http
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
+	"strconv"
+	"sync"
 
 	// "net/http"
 	"runtime"
@@ -29,6 +34,129 @@ func getRealRemote(ctx *fasthttp.RequestCtx) string {
 	return ctx.RemoteIP().String()
 
 }
+func predictAttackType(logEntry map[string]string) string {
+	// Convert logEntry map to JSON
+	jsonBytes, err := json.Marshal(logEntry)
+	if err != nil {
+		log.Error().Str("error", err.Error()).Msg("Error marshalling logEntry to JSON")
+		return "Error in prediction"
+	}
+
+	// Execute the Python script, passing the JSON string via stdin
+	cmd := exec.Command("python", "../../predict.py")
+	cmd.Stdin = bytes.NewReader(jsonBytes) // Pass JSON as stdin
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Error().Str("error", err.Error()).Msg("Error executing predictAttackType")
+		return "Error in prediction"
+	}
+
+	// Assuming the output from your Python script is the prediction result
+	return string(output)
+}
+func dashboardHandler(ctx *fasthttp.RequestCtx) {
+	dashboardHTML := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .log { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+        .log-key { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>Dashboard</h2>
+    <div id="logContainer"></div>
+
+	<script>
+	let lastTimestamp = 0;
+	
+	function fetchLogs() {
+		fetch("/logs/updates?lastTimestamp=" + lastTimestamp)
+			.then(response => response.json())
+			.then(data => {
+				const container = document.getElementById("logContainer");
+				data.forEach(log => {
+					const logDiv = document.createElement("div");
+					logDiv.classList.add("log");
+	
+					Object.keys(log).forEach(key => {
+						if (key !== "timestamp") {
+							const p = document.createElement("p");
+							const keySpan = document.createElement("span");
+							keySpan.textContent = key + ": ";
+							keySpan.style.fontWeight = "bold";
+							p.appendChild(keySpan);
+	
+							// Create a text node for safe text rendering
+							const valueText = document.createTextNode(log[key]);
+							p.appendChild(valueText);
+	
+							logDiv.appendChild(p);
+						}
+					});
+	
+					container.appendChild(logDiv);
+	
+					// Update lastTimestamp with the latest log's timestamp
+					if (log.timestamp > lastTimestamp) {
+						lastTimestamp = log.timestamp;
+					}
+				});
+			})
+			.catch(err => console.error("Failed to fetch logs:", err));
+	
+		// Fetch new logs every 5 seconds
+		setTimeout(fetchLogs, 5000);
+	}
+	
+	// Initial fetch
+	fetchLogs();
+	</script>
+	
+
+</body>
+</html>`
+
+	ctx.SetContentType("text/html")
+	ctx.SetBodyString(dashboardHTML)
+}
+
+var (
+	logs     []map[string]interface{}
+	logMutex sync.Mutex
+)
+
+func appendLog(logEntry map[string]interface{}) {
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	// Adding a timestamp to each log entry
+	logEntry["timestamp"] = time.Now().Unix()
+	logs = append(logs, logEntry)
+}
+
+func logsUpdateHandler(ctx *fasthttp.RequestCtx) {
+	// Extracting the last timestamp received by the client
+	lastTimestampParam := string(ctx.QueryArgs().Peek("lastTimestamp"))
+	lastTimestamp, _ := strconv.ParseInt(lastTimestampParam, 10, 64)
+
+	var newLogs []map[string]interface{}
+
+	logMutex.Lock()
+	for _, logEntry := range logs {
+		if logEntryTimestamp, ok := logEntry["timestamp"].(int64); ok && logEntryTimestamp > lastTimestamp {
+			newLogs = append(newLogs, logEntry)
+		}
+	}
+	logMutex.Unlock()
+
+	updatedLogs, _ := json.Marshal(newLogs)
+
+	ctx.SetContentType("application/json")
+	ctx.SetBody(updatedLogs)
+}
 
 func hellPot(ctx *fasthttp.RequestCtx) {
 	path, pok := ctx.UserValue("path").(string)
@@ -37,6 +165,47 @@ func hellPot(ctx *fasthttp.RequestCtx) {
 	}
 
 	remoteAddr := getRealRemote(ctx)
+	userAgent := string(ctx.UserAgent())
+	uri := string(ctx.RequestURI())
+	method := string(ctx.Method())
+	log.Info().
+		Str("USERAGENT", userAgent).
+		Str("REMOTE_ADDR", remoteAddr).
+		Str("URL", uri).
+		Str("METHOD", method).
+		Msg("Request received")
+
+	// Construct log entry as a map to hold necessary information
+	logEntryMap := map[string]string{
+		"REMOTE_ADDR": remoteAddr,
+		"USERAGENT":   userAgent,
+	}
+	// This map is for dashboard logging
+	logEntryForDashboard := map[string]interface{}{
+		"REMOTE_ADDR": remoteAddr,
+		"USERAGENT":   userAgent,
+		"URL":         uri,
+		"METHOD":      method,
+	}
+
+	// Dynamically add fields based on the request URI
+	switch string(ctx.RequestURI()) {
+	case "/wp-login":
+		logEntryMap["USERNAME"] = string(ctx.Request.PostArgs().Peek("username"))
+		logEntryMap["PASSWORD"] = string(ctx.Request.PostArgs().Peek("password"))
+		// Add the same fields for dashboard logging
+		logEntryForDashboard["USERNAME"] = logEntryMap["USERNAME"]
+		logEntryForDashboard["PASSWORD"] = logEntryMap["PASSWORD"]
+	case "/forum.php":
+		logEntryMap["TITLE"] = string(ctx.Request.PostArgs().Peek("postTitle"))
+		logEntryMap["CONTENT"] = string(ctx.Request.PostArgs().Peek("postContent"))
+		// Add the same fields for dashboard logging
+		logEntryForDashboard["TITLE"] = logEntryMap["TITLE"]
+		logEntryForDashboard["CONTENT"] = logEntryMap["CONTENT"]
+	default:
+		logEntryMap["URL"] = string(ctx.RequestURI()) // General case for other URLs
+	}
+
 	if string(ctx.RequestURI()) == "/wp-login" {
 		slog := log.With().
 			Str("USERAGENT", string(ctx.UserAgent())).
@@ -78,6 +247,14 @@ func hellPot(ctx *fasthttp.RequestCtx) {
 		slog.Info().Msg("NEW")
 
 	}
+
+	// Prediction Logic (assuming you have a function that handles this)
+	prediction := predictAttackType(logEntryMap)
+	log.Info().Msgf("Predicted Attack Type: %s", prediction)
+
+	// Append log entry for dashboard
+	logEntryForDashboard["Prediction"] = prediction
+	appendLog(logEntryForDashboard)
 
 	// Get Request url and remove any get parameters that are appended.
 	reqUrlString := string(ctx.RequestURI())
@@ -339,7 +516,8 @@ func Serve() error {
 	l := config.HTTPBind + ":" + config.HTTPPort
 
 	r := router.New()
-
+	// Updated to ensure every request is handled by hellPot, thereby logging all attempts
+	r.ANY("/{path:*}", hellPot) // Using r.ANY to catch all HTTP methods
 	if config.MakeRobots && !config.CatchAll {
 		r.GET("/robots.txt", robotsTXT)
 	}
@@ -356,6 +534,8 @@ func Serve() error {
 	}
 
 	srv := getSrv(r)
+	r.GET("/dashboard", dashboardHandler)     // Endpoint for serving dashboard HTML
+	r.GET("/logs/updates", logsUpdateHandler) // Endpoint for serving log updates
 
 	//goland:noinspection GoBoolExpressions
 	if !config.UseUnixSocket || runtime.GOOS == "windows" {
