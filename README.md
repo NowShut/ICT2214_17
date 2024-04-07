@@ -1,12 +1,12 @@
-##ByteBait
-##Summary
+## ByteBait
+## Summary
 ByteBait is a honeypot solution that leverages automated tools within its honeypot environment to analyze the attacker's behaviours/attack patterns.
 
 It is built on HellPot
 
 The main idea of ByteBait is to bait hackers into attacking a fake website that mimics the real website. This will not only divert them from the actual website, it will also allow us to capture the behaviour of the attackers in a controlled environment.
 
-##Setup
+## Setup
 git clone https://github.com/NowShut/ICT2214_17.git
 
 cd HellPot
@@ -19,7 +19,7 @@ Edit your newly generated HellPot.toml as desired.
 
 Run the honeypot using ./HellPot -c config.toml
 
-##Features
+## Features
 ML analysis of attack patterns
 Dashboard
 For demonstration purposes, the dashboard is integrated into the honeypot web server.
