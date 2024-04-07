@@ -17,7 +17,7 @@ The main idea of ByteBait is to bait hackers into attacking a fake website that 
 
   * npm install express
 
-  *npm start (to launch)
+  * npm start (to launch)
 - For the HoneyPot:
   
   * cd HellPot
