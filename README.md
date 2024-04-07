@@ -9,15 +9,27 @@ The main idea of ByteBait is to bait hackers into attacking a fake website that 
 ## Setup
 - git clone https://github.com/NowShut/ICT2214_17.git
 
-- cd HellPot
+- Open 2 different windows of compilers or 2 different machines
 
-- make
+- For the HTTP Server:
 
-- Generate config file using ./HellPot --genconfig
+  * npm install
 
-- Edit your newly generated HellPot.toml as desired.
+  * npm install express
 
-- Run the honeypot using ./HellPot -c config.toml
+  *npm start (to launch)
+- For the HoneyPot:
+  
+  * cd HellPot
+
+  * make
+
+  * Generate config file using ./HellPot --genconfig 
+
+  * Edit your newly generated HellPot.toml as desired.
+
+  * Run the honeypot using ./HellPot -c config.toml / go run HellPot.go (for windows after going to the cmd/HellPot directory in the terminal)
+- Run both and experiment
 
 ## Features
 1. ML analysis of attack patterns
